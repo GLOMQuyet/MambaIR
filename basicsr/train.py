@@ -1,6 +1,10 @@
 import datetime
 import sys
 import os
+import warnings
+
+# Tắt tất cả các cảnh báo
+warnings.filterwarnings("ignore")
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.abspath(os.path.join(current_dir, '..'))
 
