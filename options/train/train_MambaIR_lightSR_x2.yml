@@ -100,9 +100,9 @@ logger:
   print_freq: 200
   save_checkpoint_freq: !!float 5e3
   use_tb_logger: true
-  wandb:
-    project: MambaIR
-    resume_id: sh8rgzhe
+  # wandb:
+  #   project: MambaIR
+  #   resume_id: sh8rgzhe
 
 # dist training settings
 dist_params:
