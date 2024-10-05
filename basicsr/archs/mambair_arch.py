@@ -659,8 +659,6 @@ class PatchProcessorheight(nn.Module):
             x_s = x_s[:, :H, :W, :]
         return x_s
 
-
-
 class VSSBlock(nn.Module):
     def __init__(
             self,
@@ -675,13 +673,28 @@ class VSSBlock(nn.Module):
     ):
         super().__init__()
         self.ln_1 = norm_layer(hidden_dim)
-        self.self_attention = SS2D(d_model=hidden_dim, d_state=d_state,expand=expand,dropout=attn_drop_rate, **kwargs)
+        self.mamba_square = PatchProcessor(model=SS2D(d_model=hidden_dim, d_state=d_state,expand=expand,dropout=attn_drop_rate, **kwargs), input_channels=60, window_size=32, device="cuda")
         self.drop_path = DropPath(drop_path)
         self.skip_scale= nn.Parameter(torch.ones(hidden_dim))
         self.conv_blk = CAB(hidden_dim,is_light_sr)
         self.ln_2 = nn.LayerNorm(hidden_dim)
         self.skip_scale2 = nn.Parameter(torch.ones(hidden_dim))
-
+        
+        self.ln_3 = norm_layer(hidden_dim)
+        self.mamba_square_height =  PatchProcessorheight(model=SS2D(d_model=hidden_dim, d_state=d_state,expand=expand,dropout=attn_drop_rate, **kwargs), input_channels=60, device="cuda")
+        self.drop_path1 = DropPath(drop_path)
+        self.skip_scale3= nn.Parameter(torch.ones(hidden_dim))
+        self.conv_blk1 = CAB(hidden_dim,is_light_sr)
+        self.ln_4 = nn.LayerNorm(hidden_dim)
+        self.skip_scale4 = nn.Parameter(torch.ones(hidden_dim))
+        
+        self.ln_5 = norm_layer(hidden_dim) 
+        self.mamba_square_width =  PatchProcessorwidth(model=SS2D(d_model=hidden_dim, d_state=d_state,expand=expand,dropout=attn_drop_rate, **kwargs), input_channels=60, device="cuda")
+        self.drop_path2 = DropPath(drop_path)
+        self.skip_scale5= nn.Parameter(torch.ones(hidden_dim))
+        self.conv_blk2 = CAB(hidden_dim,is_light_sr)
+        self.ln_6 = nn.LayerNorm(hidden_dim)
+        self.skip_scale6 = nn.Parameter(torch.ones(hidden_dim))
 
 
     def forward(self, input, x_size):
@@ -689,109 +702,19 @@ class VSSBlock(nn.Module):
         B, L, C = input.shape
         input = input.view(B, *x_size, C).contiguous()  # [B,H,W,C]
         x = self.ln_1(input)
-        x = input*self.skip_scale + self.drop_path(self.self_attention(x))
+        x = input*self.skip_scale + self.drop_path(self.mamba_square(x))
         x = x*self.skip_scale2 + self.conv_blk(self.ln_2(x).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous()
-        x = x.view(B, -1, C).contiguous()
-        return x
+        
+        x1 = self.ln_3(x)
+        x1 = x*self.skip_scale3 + self.drop_path1(self.mamba_square_height(x1))
+        x1 = x1*self.skip_scale4 + self.conv_blk1(self.ln_4(x1).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous()
+        
+        x2 = self.ln_5(x1)
+        x2 = x1*self.skip_scale4 + self.drop_path2(self.mamba_square_width(x2))
+        x2 = x2*self.skip_scale5 + self.conv_blk2(self.ln_6(x2).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous()
+        x2 = x2.view(B, -1, C).contiguous()
+        return x2
 
-class VSSBlock_S(nn.Module):
-    def __init__(
-            self,
-            hidden_dim: int = 0,
-            drop_path: float = 0,
-            norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
-            attn_drop_rate: float = 0,
-            d_state: int = 16,
-            expand: float = 2.,
-            is_light_sr: bool = False,
-            **kwargs,
-    ):
-        super().__init__()
-        self.ln_1 = norm_layer(hidden_dim)
-        self.self_attention = PatchProcessor(model=SS2D(d_model=hidden_dim, d_state=d_state,expand=expand,dropout=attn_drop_rate, **kwargs), input_channels=60, window_size=32, device="cuda")
-        self.drop_path = DropPath(drop_path)
-        self.skip_scale= nn.Parameter(torch.ones(hidden_dim))
-        self.conv_blk = CAB(hidden_dim,is_light_sr)
-        self.ln_2 = nn.LayerNorm(hidden_dim)
-        self.skip_scale2 = nn.Parameter(torch.ones(hidden_dim))
-
-
-
-    def forward(self, input, x_size):
-        # x [B,HW,C]
-        B, L, C = input.shape
-        input = input.view(B, *x_size, C).contiguous()  # [B,H,W,C]
-        x = self.ln_1(input)
-        x = input*self.skip_scale + self.drop_path(self.self_attention(x))
-        x = x*self.skip_scale2 + self.conv_blk(self.ln_2(x).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous()
-        x = x.view(B, -1, C).contiguous()
-        return x
-    
-class VSSBlock_H(nn.Module):
-    def __init__(
-            self,
-            hidden_dim: int = 0,
-            drop_path: float = 0,
-            norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
-            attn_drop_rate: float = 0,
-            d_state: int = 16,
-            expand: float = 2.,
-            is_light_sr: bool = False,
-            **kwargs,
-    ):
-        super().__init__()
-        self.ln_1 = norm_layer(hidden_dim)
-        self.self_attention =  PatchProcessorheight(model=SS2D(d_model=hidden_dim, d_state=d_state,expand=expand,dropout=attn_drop_rate, **kwargs), input_channels=60, device="cuda")
-        self.drop_path = DropPath(drop_path)
-        self.skip_scale= nn.Parameter(torch.ones(hidden_dim))
-        self.conv_blk = CAB(hidden_dim,is_light_sr)
-        self.ln_2 = nn.LayerNorm(hidden_dim)
-        self.skip_scale2 = nn.Parameter(torch.ones(hidden_dim))
-
-
-
-    def forward(self, input, x_size):
-        # x [B,HW,C]
-        B, L, C = input.shape
-        input = input.view(B, *x_size, C).contiguous()  # [B,H,W,C]
-        x = self.ln_1(input)
-        x = input*self.skip_scale + self.drop_path(self.self_attention(x))
-        x = x*self.skip_scale2 + self.conv_blk(self.ln_2(x).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous()
-        x = x.view(B, -1, C).contiguous()
-        return x
-
-class VSSBlock_W(nn.Module):
-    def __init__(
-            self,
-            hidden_dim: int = 0,
-            drop_path: float = 0,
-            norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
-            attn_drop_rate: float = 0,
-            d_state: int = 16,
-            expand: float = 2.,
-            is_light_sr: bool = False,
-            **kwargs,
-    ):
-        super().__init__()
-        self.ln_1 = norm_layer(hidden_dim)
-        self.self_attention = PatchProcessorwidth(model=SS2D(d_model=hidden_dim, d_state=d_state,expand=expand,dropout=attn_drop_rate, **kwargs), input_channels=60, device="cuda")
-        self.drop_path = DropPath(drop_path)
-        self.skip_scale= nn.Parameter(torch.ones(hidden_dim))
-        self.conv_blk = CAB(hidden_dim,is_light_sr)
-        self.ln_2 = nn.LayerNorm(hidden_dim)
-        self.skip_scale2 = nn.Parameter(torch.ones(hidden_dim))
-
-
-
-    def forward(self, input, x_size):
-        # x [B,HW,C]
-        B, L, C = input.shape
-        input = input.view(B, *x_size, C).contiguous()  # [B,H,W,C]
-        x = self.ln_1(input)
-        x = input*self.skip_scale + self.drop_path(self.self_attention(x))
-        x = x*self.skip_scale2 + self.conv_blk(self.ln_2(x).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous()
-        x = x.view(B, -1, C).contiguous()
-        return x
 
 
 class BasicLayer(nn.Module):
@@ -827,40 +750,8 @@ class BasicLayer(nn.Module):
 
         # build blocks
         self.blocks = nn.ModuleList()
-        self.blocks.append(VSSBlock_S(
-            hidden_dim=dim,
-            drop_path=drop_path[0],
-            norm_layer=nn.LayerNorm,
-            attn_drop_rate=0,
-            d_state=d_state,
-            expand=self.mlp_ratio,
-            input_resolution=input_resolution,
-            is_light_sr=is_light_sr
-        ))
 
-        self.blocks.append(VSSBlock_H(
-            hidden_dim=dim,
-            drop_path=drop_path[1],
-            norm_layer=nn.LayerNorm,
-            attn_drop_rate=0,
-            d_state=d_state,
-            expand=self.mlp_ratio,
-            input_resolution=input_resolution,
-            is_light_sr=is_light_sr
-        ))
-
-        self.blocks.append(VSSBlock_W(
-            hidden_dim=dim,
-            drop_path=drop_path[2],
-            norm_layer=nn.LayerNorm,
-            attn_drop_rate=0,
-            d_state=d_state,
-            expand=self.mlp_ratio,
-            input_resolution=input_resolution,
-            is_light_sr=is_light_sr
-        ))
-
-        for i in range(depth//2, depth):
+        for i in range(depth//3):
             self.blocks.append(VSSBlock(
                 hidden_dim=dim,
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
@@ -869,7 +760,6 @@ class BasicLayer(nn.Module):
                 d_state=d_state,
                 expand=self.mlp_ratio,
                 input_resolution=input_resolution,is_light_sr=is_light_sr))
-
         # patch merging layer
         if downsample is not None:
             self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer)
