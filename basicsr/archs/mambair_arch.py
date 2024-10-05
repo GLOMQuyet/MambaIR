@@ -379,6 +379,288 @@ class SS2D(nn.Module):
         return out
 
 
+class PatchProcessor(nn.Module):
+    def __init__(self, model, input_channels, window_size=32, device='cuda'):
+        """
+        Initializes the PatchProcessor module.
+
+        Args:
+            model: An instance of the SS2D model.
+            input_channels: Number of input channels in the tensor.
+            window_size (int): Size of each window. Must be a fixed value.
+            device: Device to run the computations on ('cuda' or 'cpu').
+        """
+        super(PatchProcessor, self).__init__()
+        self.model = model.to(device)
+        self.device = device
+        self.input_channels = input_channels
+        self.window_size = window_size
+
+    def window_partition(self, x):
+        """
+        Partitions the input tensor into non-overlapping windows.
+
+        Args:
+            x: Tensor of shape (batch_size, height, width, channels).
+
+        Returns:
+            windows: Tensor of shape (num_windows * batch_size, window_size, window_size, channels).
+        """
+        b, h, w, c = x.shape
+        # Kiểm tra chia hết trước khi reshape
+        assert h % self.window_size == 0 and w % self.window_size == 0, \
+            f"H và W ({h}, {w}) phải chia hết cho window_size ({self.window_size})."
+
+        # Reshape và permute để phân vùng thành các cửa sổ
+        x = x.view(b, h // self.window_size, self.window_size, w // self.window_size, self.window_size, c)
+        x = x.permute(0, 1, 3, 2, 4, 5).contiguous()
+        windows = x.view(-1, self.window_size, self.window_size, c)
+        return windows
+
+
+    def window_reverse(self, windows, h, w):
+        """
+        Reverses the window partitioning to reconstruct the original tensor.
+
+        Args:
+            windows: Tensor of shape (num_windows * batch_size, window_size, window_size, channels).
+            h (int): Original height of the image.
+            w (int): Original width of the image.
+
+        Returns:
+            x: Tensor of shape (batch_size, h, w, channels).
+        """
+        num_windows_h = h // self.window_size
+        num_windows_w = w // self.window_size
+        b = windows.shape[0] // (num_windows_h * num_windows_w)
+        x = windows.view(b, num_windows_h, num_windows_w, self.window_size, self.window_size, -1)
+        x = x.permute(0, 1, 3, 2, 4, 5).contiguous()
+        x = x.view(b, h, w, -1)
+        return x
+
+    def forward(self, x):
+        """
+        Forward pass to process the input tensor through patch partitioning and the SS2D model.
+
+        Args:
+            x: Input tensor of shape (batch_size, height, width, channels).
+
+        Returns:
+            Output tensor after processing and merging.
+        """
+        # Chuyển tensor sang thiết bị được chỉ định
+        x = x.to(self.device)
+        B, H, W, C = x.shape
+
+        # Tính toán padding cần thiết để H và W chia hết cho window_size
+        pad_h = (self.window_size - H % self.window_size) % self.window_size
+        pad_w = (self.window_size - W % self.window_size) % self.window_size
+
+        if pad_h != 0 or pad_w != 0:
+            x_padded = F.pad(x.permute(0, 3, 1, 2), (0, pad_w, 0, pad_h), mode='reflect').permute(0, 2, 3, 1)
+        else:
+            x_padded = x
+
+        B_p, H_p, W_p, C_p = x_padded.shape
+        x_s = self.window_partition(x_padded)
+        x_s = self.model(x_s)
+        x_s = self.window_reverse(x_s, H_p, W_p)
+
+        if pad_h != 0 or pad_w != 0:
+            x_s = x_s[:, :H, :W, :]
+
+        return x_s
+
+class PatchProcessorwidth(nn.Module):
+    def __init__(self, model, input_channels, window_height=64, window_width=16, device='cuda'):
+        """
+        Initializes the PatchProcessorwidth module.
+
+        Args:
+            model: An instance of the SS2D model.
+            input_channels: Number of input channels in the tensor.
+            window_height (int): Height of each window.
+            window_width (int): Width of each window.
+            device: Device to run the computations on ('cuda' or 'cpu').
+        """
+        super(PatchProcessorwidth, self).__init__()
+        self.model = model.to(device)
+        self.device = device
+        self.input_channels = input_channels
+        self.window_height = window_height
+        self.window_width = window_width
+
+    def window_partition(self, x):
+        """
+        Partitions the input tensor into non-overlapping rectangular windows.
+
+        Args:
+            x: Tensor of shape (batch_size, height, width, channels).
+
+        Returns:
+            windows: Tensor of shape (num_windows * batch_size, window_height, window_width, channels).
+        """
+        b, h, w, c = x.shape
+        # Kiểm tra chia hết trước khi reshape
+        assert h % self.window_height == 0 and w % self.window_width == 0, \
+            f"H và W ({h}, {w}) phải chia hết cho window_height ({self.window_height}) và window_width ({self.window_width})."
+
+        # Reshape và permute để phân vùng thành các cửa sổ
+        x = x.view(b, h // self.window_height, self.window_height, w // self.window_width, self.window_width, c)
+        x = x.permute(0, 1, 3, 2, 4, 5).contiguous()
+        windows = x.view(-1, self.window_height, self.window_width, c)
+        return windows
+
+    def window_reverse(self, windows, h, w):
+        """
+        Reverses the window partitioning to reconstruct the original tensor.
+
+        Args:
+            windows: Tensor of shape (num_windows * batch_size, window_height, window_width, channels).
+            h (int): Original height of the image.
+            w (int): Original width of the image.
+
+        Returns:
+            x: Tensor of shape (batch_size, h, w, channels).
+        """
+        num_windows_h = h // self.window_height
+        num_windows_w = w // self.window_width
+        b = windows.shape[0] // (num_windows_h * num_windows_w)
+        x = windows.view(b, num_windows_h, num_windows_w, self.window_height, self.window_width, -1)
+        x = x.permute(0, 1, 3, 2, 4, 5).contiguous()
+        x = x.view(b, h, w, -1)
+        return x
+
+    def forward(self, x):
+        """
+        Forward pass to process the input tensor through patch partitioning and the SS2D model.
+
+        Args:
+            x: Input tensor of shape (batch_size, height, width, channels).
+
+        Returns:
+            Output tensor after processing and merging.
+        """
+        # Chuyển tensor sang thiết bị được chỉ định
+        x = x.to(self.device)
+        B, H, W, C = x.shape
+
+        # Tính toán padding cần thiết để H và W chia hết cho window_height và window_width
+        pad_h = (self.window_height - H % self.window_height) % self.window_height
+        pad_w = (self.window_width - W % self.window_width) % self.window_width
+
+        if pad_h != 0 or pad_w != 0:
+            # F.pad yêu cầu định dạng (N, C, H, W)
+            x_padded = F.pad(x.permute(0, 3, 1, 2), (0, pad_w, 0, pad_h), mode='reflect').permute(0, 2, 3, 1)
+        else:
+            x_padded = x
+
+        B_p, H_p, W_p, C_p = x_padded.shape
+        x_s = self.window_partition(x_padded)
+        x_s = self.model(x_s)
+        x_s = self.window_reverse(x_s, H_p, W_p)
+
+        if pad_h != 0 or pad_w != 0:
+            x_s = x_s[:, :H, :W, :]
+
+        return x_s
+
+class PatchProcessorheight(nn.Module):
+    def __init__(self, model, input_channels, window_height=16, window_width=64, device='cuda'):
+        """
+        Initializes the PatchProcessorheight module.
+
+        Args:
+            model: An instance of the SS2D model.
+            input_channels: Number of input channels in the tensor.
+            window_height (int): Height of each window.
+            window_width (int): Width of each window.
+            device: Device to run the computations on ('cuda' or 'cpu').
+        """
+        super(PatchProcessorheight, self).__init__()
+        self.model = model.to(device)
+        self.device = device
+        self.input_channels = input_channels
+        self.window_height = window_height
+        self.window_width = window_width
+
+    def window_partition(self, x):
+        """
+        Partitions the input tensor into non-overlapping rectangular windows.
+
+        Args:
+            x: Tensor of shape (batch_size, height, width, channels).
+
+        Returns:
+            windows: Tensor of shape (num_windows * batch_size, window_height, window_width, channels).
+        """
+        b, h, w, c = x.shape
+        # Kiểm tra chia hết trước khi reshape
+        assert h % self.window_height == 0 and w % self.window_width == 0, \
+            f"H và W ({h}, {w}) phải chia hết cho window_height ({self.window_height}) và window_width ({self.window_width})."
+
+        # Reshape và permute để phân vùng thành các cửa sổ
+        x = x.view(b, h // self.window_height, self.window_height, w // self.window_width, self.window_width, c)
+        x = x.permute(0, 1, 3, 2, 4, 5).contiguous()
+        windows = x.view(-1, self.window_height, self.window_width, c)
+        return windows
+
+    def window_reverse(self, windows, h, w):
+        """
+        Reverses the window partitioning to reconstruct the original tensor.
+
+        Args:
+            windows: Tensor of shape (num_windows * batch_size, window_height, window_width, channels).
+            h (int): Original height of the image.
+            w (int): Original width of the image.
+
+        Returns:
+            x: Tensor of shape (batch_size, h, w, channels).
+        """
+        num_windows_h = h // self.window_height
+        num_windows_w = w // self.window_width
+        b = windows.shape[0] // (num_windows_h * num_windows_w)
+        x = windows.view(b, num_windows_h, num_windows_w, self.window_height, self.window_width, -1)
+        x = x.permute(0, 1, 3, 2, 4, 5).contiguous()
+        x = x.view(b, h, w, -1)
+        return x
+
+    def forward(self, x):
+        """
+        Forward pass to process the input tensor through patch partitioning and the SS2D model.
+
+        Args:
+            x: Input tensor of shape (batch_size, height, width, channels).
+
+        Returns:
+            Output tensor after processing and merging.
+        """
+        # Chuyển tensor sang thiết bị được chỉ định
+        x = x.to(self.device)
+        B, H, W, C = x.shape
+
+        # Tính toán padding cần thiết để H và W chia hết cho window_height và window_width
+        pad_h = (self.window_height - H % self.window_height) % self.window_height
+        pad_w = (self.window_width - W % self.window_width) % self.window_width
+
+        if pad_h != 0 or pad_w != 0:
+            # F.pad yêu cầu định dạng (N, C, H, W)
+            x_padded = F.pad(x.permute(0, 3, 1, 2), (0, pad_w, 0, pad_h), mode='reflect').permute(0, 2, 3, 1)
+        else:
+            x_padded = x
+
+        B_p, H_p, W_p, C_p = x_padded.shape
+        x_s = self.window_partition(x_padded)
+        x_s = self.model(x_s)
+        
+        x_s = self.window_reverse(x_s, H_p, W_p)
+
+        if pad_h != 0 or pad_w != 0:
+            x_s = x_s[:, :H, :W, :]
+        return x_s
+
+
+
 class VSSBlock(nn.Module):
     def __init__(
             self,
@@ -394,6 +676,105 @@ class VSSBlock(nn.Module):
         super().__init__()
         self.ln_1 = norm_layer(hidden_dim)
         self.self_attention = SS2D(d_model=hidden_dim, d_state=d_state,expand=expand,dropout=attn_drop_rate, **kwargs)
+        self.drop_path = DropPath(drop_path)
+        self.skip_scale= nn.Parameter(torch.ones(hidden_dim))
+        self.conv_blk = CAB(hidden_dim,is_light_sr)
+        self.ln_2 = nn.LayerNorm(hidden_dim)
+        self.skip_scale2 = nn.Parameter(torch.ones(hidden_dim))
+
+
+
+    def forward(self, input, x_size):
+        # x [B,HW,C]
+        B, L, C = input.shape
+        input = input.view(B, *x_size, C).contiguous()  # [B,H,W,C]
+        x = self.ln_1(input)
+        x = input*self.skip_scale + self.drop_path(self.self_attention(x))
+        x = x*self.skip_scale2 + self.conv_blk(self.ln_2(x).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous()
+        x = x.view(B, -1, C).contiguous()
+        return x
+
+class VSSBlock_S(nn.Module):
+    def __init__(
+            self,
+            hidden_dim: int = 0,
+            drop_path: float = 0,
+            norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+            attn_drop_rate: float = 0,
+            d_state: int = 16,
+            expand: float = 2.,
+            is_light_sr: bool = False,
+            **kwargs,
+    ):
+        super().__init__()
+        self.ln_1 = norm_layer(hidden_dim)
+        self.self_attention = PatchProcessor(model=SS2D(d_model=hidden_dim, d_state=d_state,expand=expand,dropout=attn_drop_rate, **kwargs), input_channels=60, window_size=32, device="cuda")
+        self.drop_path = DropPath(drop_path)
+        self.skip_scale= nn.Parameter(torch.ones(hidden_dim))
+        self.conv_blk = CAB(hidden_dim,is_light_sr)
+        self.ln_2 = nn.LayerNorm(hidden_dim)
+        self.skip_scale2 = nn.Parameter(torch.ones(hidden_dim))
+
+
+
+    def forward(self, input, x_size):
+        # x [B,HW,C]
+        B, L, C = input.shape
+        input = input.view(B, *x_size, C).contiguous()  # [B,H,W,C]
+        x = self.ln_1(input)
+        x = input*self.skip_scale + self.drop_path(self.self_attention(x))
+        x = x*self.skip_scale2 + self.conv_blk(self.ln_2(x).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous()
+        x = x.view(B, -1, C).contiguous()
+        return x
+    
+class VSSBlock_H(nn.Module):
+    def __init__(
+            self,
+            hidden_dim: int = 0,
+            drop_path: float = 0,
+            norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+            attn_drop_rate: float = 0,
+            d_state: int = 16,
+            expand: float = 2.,
+            is_light_sr: bool = False,
+            **kwargs,
+    ):
+        super().__init__()
+        self.ln_1 = norm_layer(hidden_dim)
+        self.self_attention =  PatchProcessorheight(model=SS2D(d_model=hidden_dim, d_state=d_state,expand=expand,dropout=attn_drop_rate, **kwargs), input_channels=60, device="cuda")
+        self.drop_path = DropPath(drop_path)
+        self.skip_scale= nn.Parameter(torch.ones(hidden_dim))
+        self.conv_blk = CAB(hidden_dim,is_light_sr)
+        self.ln_2 = nn.LayerNorm(hidden_dim)
+        self.skip_scale2 = nn.Parameter(torch.ones(hidden_dim))
+
+
+
+    def forward(self, input, x_size):
+        # x [B,HW,C]
+        B, L, C = input.shape
+        input = input.view(B, *x_size, C).contiguous()  # [B,H,W,C]
+        x = self.ln_1(input)
+        x = input*self.skip_scale + self.drop_path(self.self_attention(x))
+        x = x*self.skip_scale2 + self.conv_blk(self.ln_2(x).permute(0, 3, 1, 2).contiguous()).permute(0, 2, 3, 1).contiguous()
+        x = x.view(B, -1, C).contiguous()
+        return x
+
+class VSSBlock_W(nn.Module):
+    def __init__(
+            self,
+            hidden_dim: int = 0,
+            drop_path: float = 0,
+            norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+            attn_drop_rate: float = 0,
+            d_state: int = 16,
+            expand: float = 2.,
+            is_light_sr: bool = False,
+            **kwargs,
+    ):
+        super().__init__()
+        self.ln_1 = norm_layer(hidden_dim)
+        self.self_attention = PatchProcessorwidth(model=SS2D(d_model=hidden_dim, d_state=d_state,expand=expand,dropout=attn_drop_rate, **kwargs), input_channels=60, device="cuda")
         self.drop_path = DropPath(drop_path)
         self.skip_scale= nn.Parameter(torch.ones(hidden_dim))
         self.conv_blk = CAB(hidden_dim,is_light_sr)
@@ -446,7 +827,40 @@ class BasicLayer(nn.Module):
 
         # build blocks
         self.blocks = nn.ModuleList()
-        for i in range(depth):
+        self.blocks.append(VSSBlock_S(
+            hidden_dim=dim,
+            drop_path=drop_path[0],
+            norm_layer=nn.LayerNorm,
+            attn_drop_rate=0,
+            d_state=d_state,
+            expand=self.mlp_ratio,
+            input_resolution=input_resolution,
+            is_light_sr=is_light_sr
+        ))
+
+        self.blocks.append(VSSBlock_H(
+            hidden_dim=dim,
+            drop_path=drop_path[1],
+            norm_layer=nn.LayerNorm,
+            attn_drop_rate=0,
+            d_state=d_state,
+            expand=self.mlp_ratio,
+            input_resolution=input_resolution,
+            is_light_sr=is_light_sr
+        ))
+
+        self.blocks.append(VSSBlock_W(
+            hidden_dim=dim,
+            drop_path=drop_path[2],
+            norm_layer=nn.LayerNorm,
+            attn_drop_rate=0,
+            d_state=d_state,
+            expand=self.mlp_ratio,
+            input_resolution=input_resolution,
+            is_light_sr=is_light_sr
+        ))
+
+        for i in range(depth//2):
             self.blocks.append(VSSBlock(
                 hidden_dim=dim,
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
@@ -482,7 +896,6 @@ class BasicLayer(nn.Module):
         if self.downsample is not None:
             flops += self.downsample.flops()
         return flops
-
 
 @ARCH_REGISTRY.register()
 class MambaIR(nn.Module):
