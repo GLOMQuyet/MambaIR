@@ -9,12 +9,12 @@ manual_seed: 10
 datasets:
   train:
     task: SR
-    name: DF2K
+    name: DI2K
     type: PairedImageDataset
     dataroot_gt:
-      - /kaggle/input/image-super-df2k/datasets/DF2K/HR
+      - /kaggle/input/image-super-di2k/datasets/DI2K/HR
     dataroot_lq:
-      - /kaggle/input/image-super-df2k/datasets/DF2K/LR_bicubic/X2
+      - /kaggle/input/image-super-di2k/datasets/DI2K/LR_bicubic/X2
     filename_tmpl: '{}x2'
     io_backend:
       type: disk
