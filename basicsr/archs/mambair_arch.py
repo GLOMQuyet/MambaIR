@@ -860,7 +860,7 @@ class BasicLayer(nn.Module):
             is_light_sr=is_light_sr
         ))
 
-        for i in range(depth//2):
+        for i in range(depth//2, depth):
             self.blocks.append(VSSBlock(
                 hidden_dim=dim,
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
